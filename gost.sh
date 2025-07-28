@@ -17,7 +17,7 @@ function checknew() {
     Install_ct
     rm -rf /etc/gost
     mv /tmp/gost /etc/
-    systemctl restart gost
+    service_command restart gost
   else
     exit 0
   fi
@@ -25,12 +25,18 @@ function checknew() {
 function check_sys() {
   if [[ -f /etc/redhat-release ]]; then
     release="centos"
+  elif [[ -f /etc/alpine-release ]]; then
+    release="alpine"
+  elif cat /etc/issue | grep -q -E -i "alpine"; then
+    release="alpine"
   elif cat /etc/issue | grep -q -E -i "debian"; then
     release="debian"
   elif cat /etc/issue | grep -q -E -i "ubuntu"; then
     release="ubuntu"
   elif cat /etc/issue | grep -q -E -i "centos|red hat|redhat"; then
     release="centos"
+  elif cat /proc/version | grep -q -E -i "alpine"; then
+    release="alpine"
   elif cat /proc/version | grep -q -E -i "debian"; then
     release="debian"
   elif cat /proc/version | grep -q -E -i "ubuntu"; then
@@ -52,6 +58,9 @@ function Installation_dependency() {
     if [[ ${release} == "centos" ]]; then
       yum update
       yum install -y gzip wget
+    elif [[ ${release} == "alpine" ]]; then
+      apk update
+      apk add gzip wget
     else
       apt-get update
       apt-get install -y gzip wget
@@ -60,6 +69,98 @@ function Installation_dependency() {
 }
 function check_root() {
   [[ $EUID != 0 ]] && echo -e "${Error} 当前非ROOT账号(或没有ROOT权限)，无法继续操作，请更换ROOT账号或使用 ${Green_background_prefix}sudo su${Font_color_suffix} 命令获取临时ROOT权限（执行后可能会提示输入当前账号的密码）。" && exit 1
+}
+function service_command() {
+  local action=$1
+  local service_name=$2
+  if [[ ${release} == "alpine" ]]; then
+    case $action in
+      "start")
+        rc-service $service_name start
+        ;;
+      "stop")
+        rc-service $service_name stop
+        ;;
+      "restart")
+        rc-service $service_name restart
+        ;;
+      "enable")
+        rc-update add $service_name
+        ;;
+    esac
+  else
+    case $action in
+      "start")
+        systemctl start $service_name
+        ;;
+      "stop")
+        systemctl stop $service_name
+        ;;
+      "restart")
+        systemctl restart $service_name
+        ;;
+      "enable")
+        systemctl enable $service_name
+        ;;
+    esac
+  fi
+}
+function get_service_path() {
+  if [[ ${release} == "alpine" ]]; then
+    echo "/etc/init.d"
+  else
+    echo "/usr/lib/systemd/system"
+  fi
+}
+function get_service_file_path() {
+  if [[ ${release} == "alpine" ]]; then
+    echo "/etc/init.d/gost"
+  else
+    echo "/usr/lib/systemd/system/gost.service"
+  fi
+}
+function install_service_file() {
+  local service_path=$(get_service_path)
+  
+  if [[ ${release} == "alpine" ]]; then
+    # 创建OpenRC服务脚本
+    cat > gost << 'EOF'
+#!/sbin/openrc-run
+
+name="gost"
+description="gost tunnel"
+command="/usr/bin/gost"
+command_args="-C /etc/gost/config.json"
+command_background="yes"
+pidfile="/var/run/${RC_SVCNAME}.pid"
+command_user="root"
+
+depend() {
+    need net
+    after network-online
+}
+
+start_pre() {
+    checkpath --directory --owner root:root --mode 0755 /var/run
+}
+EOF
+    chmod +x gost
+    mv gost $service_path/
+  else
+    # 使用原有的systemd服务文件下载逻辑
+    if [[ ${addyn} == [Yy] ]]; then
+      wget --no-check-certificate https://raw.githubusercontent.com/huhengbo/Multi-EasyGost/v2/gost.service && chmod -R 777 gost.service && mv gost.service $service_path/
+    else
+      wget --no-check-certificate https://raw.githubusercontent.com/huhengbo/Multi-EasyGost/v2/gost.service && chmod -R 777 gost.service && mv gost.service $service_path/
+    fi
+  fi
+}
+function get_restart_command() {
+  if [[ ${release} == "alpine" ]]; then
+    echo "rc-service gost restart"
+  else
+    echo "systemctl restart gost"
+  fi
 }
 function check_new_ver() {
   # deprecated
@@ -72,9 +173,10 @@ function check_new_ver() {
   fi
 }
 function check_file() {
-  if test ! -d "/usr/lib/systemd/system/"; then
-    mkdir /usr/lib/systemd/system
-    chmod -R 777 /usr/lib/systemd/system
+  local service_path=$(get_service_path)
+  if test ! -d "$service_path"; then
+    mkdir -p "$service_path"
+    chmod -R 755 "$service_path"
   fi
 }
 function check_nor_file() {
@@ -82,7 +184,9 @@ function check_nor_file() {
   rm -rf "$(pwd)"/gost.service
   rm -rf "$(pwd)"/config.json
   rm -rf /etc/gost
+  # 清理所有可能的服务文件位置
   rm -rf /usr/lib/systemd/system/gost.service
+  rm -rf /etc/init.d/gost
   rm -rf /usr/bin/gost
 }
 function Install_ct() {
@@ -102,8 +206,8 @@ function Install_ct() {
     mv gost-linux-"$bit"-"$ct_new_ver" gost
     mv gost /usr/bin/gost
     chmod -R 777 /usr/bin/gost
-    wget --no-check-certificate https://gotunnel.oss-cn-shenzhen.aliyuncs.com/gost.service && chmod -R 777 gost.service && mv gost.service /usr/lib/systemd/system
-    mkdir /etc/gost && wget --no-check-certificate https://gotunnel.oss-cn-shenzhen.aliyuncs.com/config.json && mv config.json /etc/gost && chmod -R 777 /etc/gost
+    install_service_file
+    mkdir /etc/gost && wget --no-check-certificate https://raw.githubusercontent.com/huhengbo/Multi-EasyGost/v2/config.json && mv config.json /etc/gost && chmod -R 777 /etc/gost
   else
     rm -rf gost-linux-"$bit"-"$ct_new_ver".gz
     wget --no-check-certificate https://github.com/ginuerzh/gost/releases/download/v"$ct_new_ver"/gost-linux-"$bit"-"$ct_new_ver".gz
@@ -111,13 +215,14 @@ function Install_ct() {
     mv gost-linux-"$bit"-"$ct_new_ver" gost
     mv gost /usr/bin/gost
     chmod -R 777 /usr/bin/gost
-    wget --no-check-certificate https://raw.githubusercontent.com/KANIKIG/Multi-EasyGost/master/gost.service && chmod -R 777 gost.service && mv gost.service /usr/lib/systemd/system
-    mkdir /etc/gost && wget --no-check-certificate https://raw.githubusercontent.com/KANIKIG/Multi-EasyGost/master/config.json && mv config.json /etc/gost && chmod -R 777 /etc/gost
+    install_service_file
+    mkdir /etc/gost && wget --no-check-certificate https://raw.githubusercontent.com/huhengbo/Multi-EasyGost/v2/config.json && mv config.json /etc/gost && chmod -R 777 /etc/gost
   fi
 
-  systemctl enable gost && systemctl restart gost
+  service_command enable gost && service_command restart gost
   echo "------------------------------"
-  if test -a /usr/bin/gost -a /usr/lib/systemctl/gost.service -a /etc/gost/config.json; then
+  local service_file=$(get_service_file_path)
+  if test -a /usr/bin/gost -a "$service_file" -a /etc/gost/config.json; then
     echo "gost安装成功"
     rm -rf "$(pwd)"/gost
     rm -rf "$(pwd)"/gost.service
@@ -131,18 +236,19 @@ function Install_ct() {
   fi
 }
 function Uninstall_ct() {
+  local service_file=$(get_service_file_path)
   rm -rf /usr/bin/gost
-  rm -rf /usr/lib/systemd/system/gost.service
+  rm -rf "$service_file"
   rm -rf /etc/gost
   rm -rf "$(pwd)"/gost.sh
   echo "gost已经成功删除"
 }
 function Start_ct() {
-  systemctl start gost
+  service_command start gost
   echo "已启动"
 }
 function Stop_ct() {
-  systemctl stop gost
+  service_command stop gost
   echo "已停止"
 }
 function Restart_ct() {
@@ -150,7 +256,7 @@ function Restart_ct() {
   confstart
   writeconf
   conflast
-  systemctl restart gost
+  service_command restart gost
   echo "已重读配置并重启"
 }
 function read_protocol() {
@@ -851,12 +957,14 @@ cron_restart() {
     if [ "$numcrontype" == "1" ]; then
       echo -e "-----------------------------------"
       read -p "每？小时重启: " cronhr
-      echo "0 0 */$cronhr * * ? * systemctl restart gost" >>/etc/crontab
+      restart_cmd=$(get_restart_command)
+      echo "0 0 */$cronhr * * ? * $restart_cmd" >>/etc/crontab
       echo -e "定时重启设置成功！"
     elif [ "$numcrontype" == "2" ]; then
       echo -e "-----------------------------------"
       read -p "每日？点重启: " cronhr
-      echo "0 0 $cronhr * * ? systemctl restart gost" >>/etc/crontab
+      restart_cmd=$(get_restart_command)
+      echo "0 0 $cronhr * * ? $restart_cmd" >>/etc/crontab
       echo -e "定时重启设置成功！"
     else
       echo "type error, please try again"
@@ -872,14 +980,14 @@ cron_restart() {
 }
 
 update_sh() {
-  ol_version=$(curl -L -s --connect-timeout 5 https://raw.githubusercontent.com/KANIKIG/Multi-EasyGost/master/gost.sh | grep "shell_version=" | head -1 | awk -F '=|"' '{print $3}')
+  ol_version=$(curl -L -s --connect-timeout 5 https://raw.githubusercontent.com/huhengbo/Multi-EasyGost/v2/gost.sh | grep "shell_version=" | head -1 | awk -F '=|"' '{print $3}')
   if [ -n "$ol_version" ]; then
     if [[ "$shell_version" != "$ol_version" ]]; then
       echo -e "存在新版本，是否更新 [Y/N]?"
       read -r update_confirm
       case $update_confirm in
       [yY][eE][sS] | [yY])
-        wget -N --no-check-certificate https://raw.githubusercontent.com/KANIKIG/Multi-EasyGost/master/gost.sh
+        wget -N --no-check-certificate https://raw.githubusercontent.com/huhengbo/Multi-EasyGost/v2/gost.sh
         echo -e "更新完成"
         exit 0
         ;;
@@ -901,7 +1009,7 @@ echo && echo -e "                 gost 一键安装配置脚本"${Red_font_prefi
         (2)能够在不借助其他工具(如screen)的情况下实现多条转发规则同时生效
         (3)机器reboot后转发不失效
   功能: (1)tcp+udp不加密转发, (2)中转机加密转发, (3)落地机解密对接转发
-  帮助文档：https://github.com/KANIKIG/Multi-EasyGost
+  帮助文档：https://github.com/huhengbo/Multi-EasyGost
 
  ${Green_font_prefix}1.${Font_color_suffix} 安装 gost
  ${Green_font_prefix}2.${Font_color_suffix} 更新 gost
@@ -944,7 +1052,7 @@ case "$num" in
   confstart
   writeconf
   conflast
-  systemctl restart gost
+  service_command restart gost
   echo -e "配置已生效，当前配置如下"
   echo -e "--------------------------------------------------------"
   show_all_conf
@@ -961,7 +1069,7 @@ case "$num" in
     confstart
     writeconf
     conflast
-    systemctl restart gost
+    service_command restart gost
     echo -e "配置已删除，服务已重启"
   else
     echo "请输入正确数字"
