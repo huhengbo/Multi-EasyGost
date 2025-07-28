@@ -17,6 +17,7 @@ function checknew() {
     Install_ct
     rm -rf /etc/gost
     mv /tmp/gost /etc/
+    check_sys  # 确保系统类型被正确识别
     service_command restart gost
   else
     exit 0
@@ -73,6 +74,8 @@ function check_root() {
 function service_command() {
   local action=$1
   local service_name=$2
+  # 确保系统类型被正确识别
+  check_sys
   if [[ ${release} == "alpine" ]]; then
     case $action in
       "start")
@@ -120,8 +123,9 @@ function get_service_file_path() {
   fi
 }
 function install_service_file() {
+  # 确保系统类型被正确识别
+  check_sys
   local service_path=$(get_service_path)
-  
   if [[ ${release} == "alpine" ]]; then
     # 创建OpenRC服务脚本
     cat > gost << 'EOF'
@@ -236,6 +240,7 @@ function Install_ct() {
   fi
 }
 function Uninstall_ct() {
+  check_sys  # 确保系统类型被正确识别
   local service_file=$(get_service_file_path)
   rm -rf /usr/bin/gost
   rm -rf "$service_file"
@@ -244,14 +249,17 @@ function Uninstall_ct() {
   echo "gost已经成功删除"
 }
 function Start_ct() {
+  check_sys  # 确保系统类型被正确识别
   service_command start gost
   echo "已启动"
 }
 function Stop_ct() {
+  check_sys  # 确保系统类型被正确识别
   service_command stop gost
   echo "已停止"
 }
 function Restart_ct() {
+  check_sys  # 确保系统类型被正确识别
   rm -rf /etc/gost/config.json
   confstart
   writeconf
@@ -957,12 +965,14 @@ cron_restart() {
     if [ "$numcrontype" == "1" ]; then
       echo -e "-----------------------------------"
       read -p "每？小时重启: " cronhr
+      check_sys  # 确保系统类型被正确识别
       restart_cmd=$(get_restart_command)
       echo "0 0 */$cronhr * * ? * $restart_cmd" >>/etc/crontab
       echo -e "定时重启设置成功！"
     elif [ "$numcrontype" == "2" ]; then
       echo -e "-----------------------------------"
       read -p "每日？点重启: " cronhr
+      check_sys  # 确保系统类型被正确识别
       restart_cmd=$(get_restart_command)
       echo "0 0 $cronhr * * ? $restart_cmd" >>/etc/crontab
       echo -e "定时重启设置成功！"
@@ -1052,6 +1062,7 @@ case "$num" in
   confstart
   writeconf
   conflast
+  check_sys  # 确保系统类型被正确识别
   service_command restart gost
   echo -e "配置已生效，当前配置如下"
   echo -e "--------------------------------------------------------"
@@ -1069,6 +1080,7 @@ case "$num" in
     confstart
     writeconf
     conflast
+    check_sys  # 确保系统类型被正确识别
     service_command restart gost
     echo -e "配置已删除，服务已重启"
   else
